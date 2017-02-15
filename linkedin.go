@@ -18,27 +18,36 @@
 package golinkedin
 
 import (
+	"bytes"
+	"io/ioutil"
 	"net/http"
 
 	l "log"
 
+	req "github.com/softctrl/golinkedin/request"
 	"golang.org/x/net/context"
 	"golang.org/x/oauth2"
 	lnk "golang.org/x/oauth2/linkedin"
 )
 
+const (
+	USER_INFO_URL = "https://api.linkedin.com/v1/people/~"
+	SHARE_URL     = "https://api.linkedin.com/v1/people/~/shares?format=json"
+)
+
 type SCLinkedin struct {
 	_ClientID     string
 	_ClientSecret string
-	_Config       oauth2.Config
+	_Config       *oauth2.Config
 	_Ctx          context.Context
-	_TokenAuth    oauth2.Token
+	_TokenAuth    *oauth2.Token
 }
 
-func NewSCLinkedin() SCLinkedin {
-	return SCLinkedin{
+func NewSCLinkedin() *SCLinkedin {
+	_res := SCLinkedin{
 		_Ctx: context.Background(),
-	}.Configure()
+	}
+	return _res.Configure()
 }
 
 func NewSCLinkedinWithValues(clientID, clientSecret string) *SCLinkedin {
@@ -49,21 +58,22 @@ func NewSCLinkedinWithValues(clientID, clientSecret string) *SCLinkedin {
 	}
 }
 
-func (__obj SCLinkedin) SetClientId(clientID string) SCLinkedin {
+func (__obj *SCLinkedin) SetClientId(clientID string) *SCLinkedin {
 	__obj._ClientID = clientID
 	return __obj
 }
 
-func (__obj SCLinkedin) SetClientSecret(clientSecret string) SCLinkedin {
+func (__obj *SCLinkedin) SetClientSecret(clientSecret string) *SCLinkedin {
 	__obj._ClientSecret = clientSecret
 	return __obj
 }
 
-func (__obj SCLinkedin) Configure() SCLinkedin {
+func (__obj *SCLinkedin) Configure() *SCLinkedin {
 
-	__obj._Config = oauth2.Config{
+	__obj._Config = &oauth2.Config{
 		ClientID:     __obj._ClientID,
 		ClientSecret: __obj._ClientSecret,
+		RedirectURL:  "https://localhost:8080", // TODO under development
 		Endpoint: oauth2.Endpoint{
 			AuthURL:  lnk.Endpoint.AuthURL,
 			TokenURL: lnk.Endpoint.TokenURL,
@@ -72,25 +82,82 @@ func (__obj SCLinkedin) Configure() SCLinkedin {
 	return __obj
 }
 
-func (__obj SCLinkedin) GetPermissionUrl(state string) string {
+func (__obj *SCLinkedin) GetPermissionUrl(state string) string {
 
 	return __obj._Config.AuthCodeURL(string(state), oauth2.AccessTypeOffline)
 
 }
 
-func (__obj SCLinkedin) Exchange(code string) error {
+func (__obj *SCLinkedin) Exchange(code string) error {
 
 	_token, _err := __obj._Config.Exchange(__obj._Ctx, code)
 	if _err == nil {
-		l.Printf("Error(%s)", _err.Error())
-		__obj._TokenAuth = *_token
+		__obj._TokenAuth = _token
 	}
 	return _err
 
 }
 
-func (__obj SCLinkedin) Client() *http.Client {
+func (__obj *SCLinkedin) Client() *http.Client {
 
-	return __obj._Config.Client(__obj._Ctx, &__obj._TokenAuth)
+	return __obj._Config.Client(__obj._Ctx, __obj._TokenAuth)
+
+}
+
+func (__obj *SCLinkedin) GetUserInfo() ([]byte, error) {
+
+	client := __obj.Client()
+	resp, err := client.Get(USER_INFO_URL)
+	if err != nil {
+		return nil, err
+	}
+
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	return body, nil
+
+}
+
+//
+//
+//
+func (__obj *SCLinkedin) ShareContentURL(__url string) ([]byte, error) {
+
+	_share := req.NewShare()
+	_share.VisibleToAnyone() // TODO
+	_share.SubmitedUrl(__url)
+
+	if _json, _err := _share.ToJson(); _err != nil {
+		return nil, _err
+	} else {
+
+		l.Printf("JSON(%s)\n", string(_json))
+		l.Printf("_share(%+v)\n", _share)
+
+		_reader := bytes.NewReader(_json)
+
+		if _req, _err := http.NewRequest(http.MethodPost, SHARE_URL, _reader); _err != nil {
+			return nil, _err
+		} else {
+			_req.Header.Set("Content-Type", "application/json")
+			_req.Header.Set("x-li-format", "json")
+			client := __obj.Client()
+			if _resp, _err := client.Do(_req); _err != nil {
+				return nil, _err
+			} else {
+				defer _resp.Body.Close()
+				_body, _err := ioutil.ReadAll(_resp.Body)
+				if _err != nil {
+					return nil, _err
+				}
+				return _body, nil
+			}
+
+		}
+
+	}
 
 }
